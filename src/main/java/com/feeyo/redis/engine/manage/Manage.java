@@ -26,17 +26,18 @@ import com.feeyo.kafka.config.TopicCfg;
 import com.feeyo.kafka.net.backend.KafkaBackendConnection;
 import com.feeyo.kafka.net.backend.broker.BrokerPartition;
 import com.feeyo.kafka.net.backend.broker.BrokerPartition.ConsumerOffset;
+import com.feeyo.kafka.net.backend.broker.offset.BrokerOffsetService;
 import com.feeyo.kafka.net.backend.pool.KafkaPool;
 import com.feeyo.net.codec.redis.RedisRequest;
 import com.feeyo.net.nio.ClosableConnection;
-import com.feeyo.net.nio.NetFlowGuard;
 import com.feeyo.net.nio.NetSystem;
-import com.feeyo.net.nio.NetFlowGuard.Guard;
 import com.feeyo.net.nio.buffer.BufferPool;
 import com.feeyo.net.nio.buffer.bucket.AbstractBucket;
 import com.feeyo.net.nio.buffer.bucket.BucketBufferPool;
 import com.feeyo.net.nio.buffer.page.PageBufferPool;
+import com.feeyo.net.nio.util.ProtoUtils;
 import com.feeyo.redis.config.PoolCfg;
+import com.feeyo.redis.config.UserCfg;
 import com.feeyo.redis.engine.RedisEngineCtx;
 import com.feeyo.redis.engine.manage.stat.BigKeyCollector;
 import com.feeyo.redis.engine.manage.stat.BigKeyCollector.BigKey;
@@ -54,10 +55,11 @@ import com.feeyo.redis.net.backend.pool.PhysicalNode;
 import com.feeyo.redis.net.backend.pool.RedisStandalonePool;
 import com.feeyo.redis.net.backend.pool.cluster.ClusterNode;
 import com.feeyo.redis.net.backend.pool.cluster.RedisClusterPool;
+import com.feeyo.redis.net.front.NetFlowGuard;
 import com.feeyo.redis.net.front.RedisFrontConnection;
+import com.feeyo.redis.net.front.NetFlowGuard.Guard;
 import com.feeyo.redis.net.front.bypass.BypassService;
 import com.feeyo.util.JavaUtils;
-import com.feeyo.util.ProtoUtils;
 import com.feeyo.util.ShellUtils;
 import com.feeyo.util.Versions;
 
@@ -147,7 +149,7 @@ public class Manage {
 	public static byte[] execute(final RedisRequest request, RedisFrontConnection frontCon) {
 		
 		int numArgs = request.getNumArgs();
-		if ( numArgs != 2 && numArgs != 3 && numArgs != 4 ) {
+		if ( numArgs < 2 ) {
 			return "-ERR Parameter error \r\n".getBytes();
 		}
 		
@@ -1012,7 +1014,7 @@ public class Manage {
 						lines.add(line1.toString());
 					}
 					return encode(lines);
-					
+	
 				// SHOW TOPIC 
 				} else if (arg2.equalsIgnoreCase("TOPIC") && (numArgs == 3 || numArgs == 2) ) {
 					List<String> lines = new ArrayList<String>();
@@ -1114,6 +1116,7 @@ public class Manage {
 					return encode(lines);
 				}
 			} 
+			
 
 		// RELOAD
 		} else if ( arg1.length == 6 ) {
@@ -1190,6 +1193,57 @@ public class Manage {
 					
 				} 
 			}
+			
+			
+			// Repair Offset
+			if ( (arg1[0] == 'R' || arg1[0] == 'r' ) && 
+					 (arg1[1] == 'E' || arg1[1] == 'e' ) && 
+					 (arg1[2] == 'P' || arg1[2] == 'p' ) && 
+					 (arg1[3] == 'A' || arg1[3] == 'a' ) &&
+					 (arg1[4] == 'I' || arg1[4] == 'i' ) &&
+					 (arg1[5] == 'R' || arg1[5] == 'r' )) {
+				
+				// REPAIR OFFSET password topicName offset
+				if ( arg2.equalsIgnoreCase("OFFSET") ) {
+					
+					String password = new String( request.getArgs()[2] );
+					String topicName = new String( request.getArgs()[3] );
+					long offset = Long.parseLong( new String( request.getArgs()[4] ) );
+					
+					UserCfg userCfg = RedisEngineCtx.INSTANCE().getUserMap().get(password);
+					if ( userCfg != null ) {
+						
+						int poolId = userCfg.getPoolId() ;
+						PoolCfg poolCfg = (PoolCfg) RedisEngineCtx.INSTANCE().getPoolCfgMap().get( poolId );
+						if ( poolCfg != null && poolCfg instanceof KafkaPoolCfg ) {
+							TopicCfg topicCfg = ((KafkaPoolCfg)poolCfg).getTopicCfgMap().get(topicName);
+							if ( topicCfg != null ) {
+								
+								for(int partition=0; partition < topicCfg.getPartitions(); partition++) {
+									boolean isRepair = BrokerOffsetService.INSTANCE().repairOffset(password, topicCfg, partition, offset);
+									if ( !isRepair ) {
+										return ("-ERR repair failed, partition=" + partition + " exec err \r\n").getBytes();
+									}
+								}
+								
+							} else {
+								return ("-ERR repair failed, topic="+ topicName + " no configuration \r\n").getBytes();
+							}
+							
+							return "+OK\r\n".getBytes();
+							
+						} else {
+							return ("-ERR repair failed, pool="+ poolId + " no configurationl or not the kafka pool type. \r\n").getBytes();
+						}
+						
+					} else {
+						return ("-ERR repair failed, password=" + password + " no configuration \r\n").getBytes();
+					}
+				}
+				
+			}
+			
+			
 			
 		// cluster 
 		} else if (arg1.length == 7) {

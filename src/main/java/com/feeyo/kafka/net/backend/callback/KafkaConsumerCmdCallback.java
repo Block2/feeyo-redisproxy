@@ -3,6 +3,9 @@ package com.feeyo.kafka.net.backend.callback;
 import java.nio.ByteBuffer;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.feeyo.kafka.codec.Errors;
 import com.feeyo.kafka.codec.FetchResponse;
 import com.feeyo.kafka.codec.Record;
@@ -11,11 +14,13 @@ import com.feeyo.kafka.net.backend.broker.offset.BrokerOffsetService;
 import com.feeyo.kafka.protocol.ApiKeys;
 import com.feeyo.kafka.protocol.types.Struct;
 import com.feeyo.net.nio.NetSystem;
+import com.feeyo.net.nio.util.ProtoUtils;
 import com.feeyo.redis.net.backend.BackendConnection;
 import com.feeyo.redis.net.front.RedisFrontConnection;
-import com.feeyo.util.ProtoUtils;
 
 public class KafkaConsumerCmdCallback extends KafkaCmdCallback {
+	
+	private static Logger LOGGER = LoggerFactory.getLogger( KafkaConsumerCmdCallback.class );
 	
 	private String topic;
 	private long consumeOffset;
@@ -88,6 +93,7 @@ public class KafkaConsumerCmdCallback extends KafkaCmdCallback {
 		// 消费offset超出范围
 		} else if (fr.getFetchErr() != null && fr.getFetchErr().getCode() == Errors.OFFSET_OUT_OF_RANGE.code()) {
 			
+			LOGGER.warn("consume callback fr err: fr={}", fr);
 			if ( isErrorOffsetRecovery )
 				returnConsumerOffset(frontCon.getPassword(), topic, partition, consumeOffset);
 			
